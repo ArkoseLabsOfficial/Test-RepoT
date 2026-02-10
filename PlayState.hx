@@ -587,28 +587,6 @@ class PlayState extends MusicBeatState
 
 	var canSpaceTaunt:Bool = true;
 
-	public function addExtraStrum(isCPU:Bool, x:Float, y:Float, noteCount:Int, targetCharacters:Array<Character>, targetNoteData:Int) {
-		var newStrum:StrumLine = new StrumLine(targetCharacters, noteCount, targetNoteData);
-		newStrum.cpu = isCPU;
-
-		for (i in 0...noteCount) {
-			var note:StrumNote = new StrumNote(x, y, i, 0);
-			note.downScroll = ClientPrefs.data.downScroll;
-			note.playAnim('static');
-			newStrum.add(note);
-			strumLineNotes.add(note);
-			note.postAddedToGroup();
-		}
-		newStrum.cameras = [camHUD];
-		strumLines.add(newStrum);
-
-		for (note in unspawnNotes) {
-			if (note.rawNoteData >= targetNoteData && note.rawNoteData < targetNoteData + noteCount) {
-				note.mustPress = !isCPU; 
-			}
-		}
-	}
-
 	override public function create()
 	{
 		theWorld = true;
@@ -1233,17 +1211,10 @@ class PlayState extends MusicBeatState
 
 			for (strumNum in 0...globalStrumCount) {
 				var char:Array<Character> = [];
+				if (strumNum == 0) char.push(dad);
+				else if (strumNum == 1) char.push(boyfriend);
+
 				var strum = new StrumLine(char);
-
-				if (strumNum == 0) {
-					char.push(dad);
-					strum.cpu = true;
-				}
-				else if (strumNum == 1) {
-					char.push(boyfriend);
-					strum.cpu = false;
-				}
-
 				strumLines.add(strum);
 			}
 
@@ -2829,15 +2800,8 @@ class PlayState extends MusicBeatState
 			var daStrumTime:Float = songNotes[0];
 			if (daStrumTime > inst.length)
 				continue;
-
-			var rawNoteData:Int = Std.int(songNotes[1]);
-			var daNoteData:Int = Std.int(songNotes[1]);
-
-			if (rawNoteData < Note.maniaKeys * 2) {
-				daNoteData = rawNoteData % Note.maniaKeys;
-			}
-
-			if (rawNoteData < 0) // this should prevent most exe mods from crashing
+			var daNoteData:Int = Std.int(songNotes[1] % Note.maniaKeys);
+			if (songNotes[1] < 0 || songNotes[1] > Note.maniaKeys * 2 - 1) // this should prevent most exe mods from crashing
 				continue;
 			var gottaHitNote:Bool = getMustPressFromRaw(section, songNotes);
 
@@ -2846,15 +2810,12 @@ class PlayState extends MusicBeatState
 				oldNote = unspawnNotes[Std.int(unspawnNotes.length - 1)];
 			else
 				oldNote = null;
-			var fixedNoteData:Int = daNoteData;
-			if (rawNoteData > Note.maniaKeys * 2 - 1) fixedNoteData = daNoteData % Note.maniaKeys;
 
-			var swagNote:Note = new Note(daStrumTime, fixedNoteData, oldNote);
+			var swagNote:Note = new Note(daStrumTime, daNoteData, oldNote);
 			swagNote.mustPress = gottaHitNote;
 			swagNote.sustainLength = songNotes[2];
 			swagNote.gfNote = (section.gfSection && (songNotes[1] < Note.maniaKeys));
 			swagNote.noteType = songNotes[3];
-			swagNote.rawNoteData = rawNoteData;
 			if(!Std.isOfType(songNotes[3], String)) swagNote.noteType = ChartingState.noteTypeList[songNotes[3]]; //Backward compatibility + compatibility with Week 7 charts
 
 			if (noBadNotes && (swagNote.hitCausesMiss || swagNote.hitHealth < 0)) {
@@ -2874,12 +2835,9 @@ class PlayState extends MusicBeatState
 			if(floorSus > 0) {
 				for (susNote in 0...floorSus+1)
 				{
-					var fixedNoteData:Int = daNoteData;
-					if (rawNoteData > Note.maniaKeys * 2 - 1) fixedNoteData = daNoteData % Note.maniaKeys;
 					oldNote = unspawnNotes[Std.int(unspawnNotes.length - 1)];
 
-					var sustainNote:Note = new Note(daStrumTime + (Conductor.stepCrochet * susNote), fixedNoteData, oldNote, true);
-					sustainNote.rawNoteData = rawNoteData;
+					var sustainNote:Note = new Note(daStrumTime + (Conductor.stepCrochet * susNote), daNoteData, oldNote, true);
 					sustainNote.mustPress = gottaHitNote;
 					sustainNote.gfNote = (section.gfSection && (songNotes[1]<Note.maniaKeys));
 					sustainNote.noteType = swagNote.noteType;
@@ -3620,9 +3578,8 @@ class PlayState extends MusicBeatState
 						var fakeCrochet:Float = (60 / SONG.bpm) * 1000;
 						notes.forEachAlive(function(daNote:Note)
 						{
-							if (daNote.mustPress && daNote.rawNoteData < Note.maniaKeys) daNote.rawNoteData += Note.maniaKeys; //put this there, I guess then everything can be fixed
-
-							var strumGroup:StrumLine = strumLines.members[getStrumIndexFromData(daNote)];
+							var strumGroup:StrumLine = playerStrums;
+							if(!daNote.mustPress) strumGroup = opponentStrums;
 
 							var strum:StrumNote = strumGroup.members[daNote.noteData];
 							if (strum == null) {
@@ -3868,14 +3825,12 @@ class PlayState extends MusicBeatState
 
 		if(!cpuControlled)
 		{
-			for (strum in allPlayerStrums) {
-				for (note in strum)
-					if(note.animation.curAnim != null && note.animation.curAnim.name != 'static')
-					{
-						note.playAnim('static');
-						note.resetAnim = 0;
-					}
-			}
+			for (note in getPlayerStrums())
+				if(note.animation.curAnim != null && note.animation.curAnim.name != 'static')
+				{
+					note.playAnim('static');
+					note.resetAnim = 0;
+				}
 		}
 
 		#if TOUCH_CONTROLS
@@ -4481,13 +4436,11 @@ class PlayState extends MusicBeatState
 		if(sec < 0) sec = 0;
 		if(SONG.notes[sec] == null) return;
 
-		if (SONG.notes[sec].targetCamera != null) {
-			newMoveCamera(SONG.notes[sec].targetCamera); //Will be main thing in the future
-		}
-
 		if(prevMustHit != null && prevMustHit == SONG.notes[sec].mustHitSection) return;
 		prevMustHit = SONG.notes[sec].mustHitSection;
-		if (SONG.notes[sec].targetCamera == null) {
+		if (SONG.notes[sec].targetCamera != null) {
+			newMoveCamera(SONG.notes[sec].targetCamera); //Will be main thing in the future
+		} else {
 			moveCamera(SONG.notes[sec].mustHitSection != true, SONG.notes[sec].gfSection);
 		}
 	}
@@ -5464,16 +5417,14 @@ class PlayState extends MusicBeatState
 				Conductor.songPosition = lastTime;
 			}
 
-			for (strum in allPlayerStrums) {
-				var spr:StrumNote = strum.members[key];
-				if(strumsBlocked[key] != true && spr != null && spr?.animation?.curAnim?.name != 'confirm')
-				{
-					GameClient.send("strumPlay", ["pressed", key, 0]);
-					spr.playAnim('pressed');
-					spr.resetAnim = 0;
-				}
-				callOnScripts('onKeyPress', [key]);
+			var spr:StrumNote = getPlayerStrums().members[key];
+			if(strumsBlocked[key] != true && spr != null && spr?.animation?.curAnim?.name != 'confirm')
+			{
+				GameClient.send("strumPlay", ["pressed", key, 0]);
+				spr.playAnim('pressed');
+				spr.resetAnim = 0;
 			}
+			callOnScripts('onKeyPress', [key]);
 		}
 	}
 
@@ -5504,16 +5455,14 @@ class PlayState extends MusicBeatState
 
 		if(!cpuControlled && startedCountdown && !paused)
 		{
-			for (strum in allPlayerStrums) {
-				var spr:StrumNote = strum.members[key];
-				if(spr != null)
-				{
-					GameClient.send("strumPlay", ["static", key, 0]);
-					spr.playAnim('static');
-					spr.resetAnim = 0;
-				}
-				callOnScripts('onKeyRelease', [key]);
+			var spr:StrumNote = getPlayerStrums().members[key];
+			if(spr != null)
+			{
+				GameClient.send("strumPlay", ["static", key, 0]);
+				spr.playAnim('static');
+				spr.resetAnim = 0;
 			}
+			callOnScripts('onKeyRelease', [key]);
 		}
 	}
 
@@ -5690,7 +5639,6 @@ class PlayState extends MusicBeatState
 			|| (note != null && note.gfNote)) {
 				char = gf;
 		}
-		if (note != null) char = strumLines.members[getStrumIndexFromData(note)].characters[0];
 		
 		if(char != null && !(GameClient.isConnected() && char == gf && GameClient.getPlayerSelf().ox != 0) /*&& char.hasMissAnimations*/)
 		{
@@ -5699,7 +5647,7 @@ class PlayState extends MusicBeatState
 
 			var animToPlay:String = singAnimations[Std.int(Math.abs(Math.min(singAnimations.length-1, direction)))] + 'miss' + suffix;
 			char.playAnim(animToPlay, true);
-			GameClient.send("charPlay", [animToPlay, char == gf, false, getStrumIndexFromData(note)]);
+			GameClient.send("charPlay", [animToPlay, char == gf]);
 			
 			if(char != gf && combo > 5 && gf != null && gf.animOffsets.exists('sad'))
 			{
@@ -5769,7 +5717,6 @@ class PlayState extends MusicBeatState
 			if(note.gfNote) {
 				char = gf;
 			}
-			if (note != null) char = strumLines.members[getStrumIndexFromData(note)].characters[0];
 
 			if(char != null && !(GameClient.isConnected() && char == gf && sid != null && playersStats.get(sid).player.ox != 0))
 			{
@@ -5785,7 +5732,7 @@ class PlayState extends MusicBeatState
 				getOpponentVocals().volume = 1;
 		}
 
-		strumPlayAnim(true, Std.int(Math.abs(note.noteData)), Conductor.stepCrochet * 1.25 / 1000 / playbackRate, sid, note);
+		strumPlayAnim(true, Std.int(Math.abs(note.noteData)), Conductor.stepCrochet * 1.25 / 1000 / playbackRate, sid);
 		note.hitByOpponent = true;
 
 		var compat:String = note.mustPress ? 'goodNoteHit' : 'opponentNoteHit';
@@ -5884,7 +5831,6 @@ class PlayState extends MusicBeatState
 					char = gf;
 					animCheck = 'cheer';
 				}
-				if (note != null) char = strumLines.members[getStrumIndexFromData(note)].characters[0];
 				
 				if(char != null && !(GameClient.isConnected() && char == gf && GameClient.getPlayerSelf().ox != 0))
 				{
@@ -5895,21 +5841,21 @@ class PlayState extends MusicBeatState
 						char.playAnim(animCheck, true);
 						char.specialAnim = true;
 						char.heyTimer = 0.6;
-						GameClient.send("charPlay", [animCheck, note.gfNote, true, getStrumIndexFromData(note)]);
+						GameClient.send("charPlay", [animCheck, note.gfNote, true]);
 					} else {
-						GameClient.send("charPlay", [animToPlay, note.gfNote, false, getStrumIndexFromData(note)]);
+						GameClient.send("charPlay", [animToPlay, note.gfNote]);
 					}
 				}
 			}
 
 			if(!cpuControlled)
 			{
-				var spr = strumLines.members[getStrumIndexFromData(note)].members[note.noteData];
+				var spr = getPlayerStrums().members[note.noteData];
 				GameClient.send("strumPlay", ["confirm", note.noteData, 0]);
 				if(spr != null) spr.playAnim('confirm', true);
 			}
 			else {
-				strumPlayAnim(false, Std.int(Math.abs(note.noteData)), Conductor.stepCrochet * 1.25 / 1000 / playbackRate, null, note);
+				strumPlayAnim(false, Std.int(Math.abs(note.noteData)), Conductor.stepCrochet * 1.25 / 1000 / playbackRate);
 			}
 			getPlayerVocals().volume = 1;
 
@@ -5937,7 +5883,7 @@ class PlayState extends MusicBeatState
 			return;
 
 		if (note != null) {
-			var strum:StrumNote = strumLines.members[getStrumIndexFromData(note)].members[note.noteData];
+			var strum:StrumNote = (note.mustPress ? playerStrums : opponentStrums).members[note.noteData];
 
 			if(strum != null && note.tail.length != 0)
 				spawnHoldSplash(note);
@@ -5947,15 +5893,8 @@ class PlayState extends MusicBeatState
 	public function spawnHoldSplash(note:Note) {
 		var end:Note = note.isSustainNote ? note.parent.tail[note.parent.tail.length - 1] : note.tail[note.tail.length - 1];
 		var splash:SustainSplash = grpHoldSplashes.recycle(SustainSplash);
-		var strum:StrumNote = strumLines.members[getStrumIndexFromData(note)].members[note.noteData];
-
-		splash.setupSusSplash(strum, note, playbackRate);
+		splash.setupSusSplash((note.mustPress ? playerStrums : opponentStrums).members[note.noteData], note, playbackRate);
 		grpHoldSplashes.add(end.noteHoldSplash = splash);
-	}
-
-	public function getStrumIndexFromData(note:Note) {
-		var strumIndex = Std.int(Math.floor(note.rawNoteData / Note.maniaKeys));
-		return strumIndex;
 	}
 
 	public function spawnNoteSplashOnNote(note:Note) {
@@ -5963,7 +5902,7 @@ class PlayState extends MusicBeatState
 			return;
 
 		if(note != null) {
-			var strum:StrumNote = strumLines.members[getStrumIndexFromData(note)].members[note.noteData];
+			var strum:StrumNote = getPlayerStrums().members[note.noteData];
 			if(strum != null)
 				spawnNoteSplash(strum.x - (Note.swagWidth - Note.swagScaledWidth), strum.y - (Note.swagWidth - Note.swagScaledWidth), note.noteData, note);
 		}
@@ -6423,17 +6362,13 @@ class PlayState extends MusicBeatState
 	}
 	#end
 
-	function strumPlayAnim(isDad:Bool, id:Int, time:Float, ?sid:String, note:Note) {
+	function strumPlayAnim(isDad:Bool, id:Int, time:Float, ?sid:String) {
 		var spr:StrumNote = null;
-		var strums = strumLines.members[getStrumIndexFromData(note)];
-
+		var strums = isDad ? getOpponentStrums() : getPlayerStrums();
 		if (sid != null) {
-			for (strums in getAllStrumsFromSID(sid)) {
-				for (strum in allPlayerStrums) {
-					if (isDad && strums == strum)
-						return;
-				}
-			}
+			strums = getStrumsFromSID(sid);
+			if (isDad && strums == getPlayerStrums())
+				return;
 		}
 		if(isDad) {
 			spr = strums.members[id];
@@ -6706,55 +6641,6 @@ class PlayState extends MusicBeatState
 		return playerStrums;
 	}
 
-	public var allPlayerStrums(get, never):Array<StrumLine>;
-	function get_allPlayerStrums():Array<StrumLine>
-	{
-		var strumList:Array<StrumLine> = [];
-		for (strum in strumLines)
-		{
-			if (!strum.cpu && playsAsBF() || strum.cpu && !playsAsBF())
-				strumList.push(strum);
-		}
-		return strumList;
-	}
-
-	public var allCpuStrums(get, never):Array<StrumLine>;
-	function get_allCpuStrums():Array<StrumLine>
-	{
-		var strumList:Array<StrumLine> = [];
-		for (strum in strumLines)
-		{
-			if (strum.cpu && playsAsBF() || !strum.cpu && !playsAsBF())
-				strumList.push(strum);
-		}
-		return strumList;
-	}
-
-	public function getAllStrumsFromSID(sid:String) {
-		var strumList:Array<StrumLine> = [];
-		if (GameClient.isConnected() && GameClient.room.state.royalMode) {
-			// TODO display note chart on seperate opponentStrums
-			if (GameClient.room.state.royalModeBfSide) {
-				for (strum in strumLines)
-					if (!strum.cpu) strumList.push(strum);
-			} else {
-				for (strum in strumLines)
-					if (strum.cpu) strumList.push(strum);
-			}
-			return strumList;
-		}
-
-		if (characters.get(sid).isPlayer == playsAsBF()) {
-			for (strum in strumLines)
-				if (!strum.cpu) strumList.push(strum);
-
-			return strumList;
-		}
-		for (strum in strumLines)
-			if (strum.cpu) strumList.push(strum);
-		return strumList;
-	}
-
 	public function getStrumsFromSID(sid:String) {
 		if (GameClient.isConnected() && GameClient.room.state.royalMode) {
 			// TODO display note chart on seperate opponentStrums
@@ -6892,17 +6778,14 @@ class PlayState extends MusicBeatState
 				if (callOnScripts('onMessageStrumPlay', [sid, message], true) == FunkinLua.Function_Stop)
 					return;
 
-				for (strums in getAllStrumsFromSID(sid)) {
-					for (strum in allPlayerStrums) {
-						if (strums == strum) {
-							return;
-						}
-						var spr = strums.members[message[1]];
-						if (spr != null) {
-							spr.playAnim(message[0] + "", true);
-							spr.resetAnim = message[2];
-						}
-					}
+				var strums = getStrumsFromSID(sid);
+				if (strums == getPlayerStrums()) {
+					return;
+				}
+				var spr = strums.members[message[1]];
+				if (spr != null) {
+					spr.playAnim(message[0] + "", true);
+					spr.resetAnim = message[2];
 				}
 			});
 		});
@@ -6925,9 +6808,6 @@ class PlayState extends MusicBeatState
 				} 
 				else if (!(message[1] ?? false)) {
 					var char = characters.get(sid);
-					if (strumLines.members[message[3]].characters[0] != null)
-						char = strumLines.members[message[3]].characters[0];
-
 					if (char == null)
 						return;
 
