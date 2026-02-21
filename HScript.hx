@@ -1,5 +1,11 @@
 package funkin.backend.scripting;
 
+import flixel.util.FlxStringUtil;
+import funkin.backend.scripting.events.CancellableEvent;
+
+/**
+ * Used to group multiple scripts together, and easily be able to call them.
+**/
 @:access(CancellableEvent)
 class ScriptPack extends Script {
 	public var scripts:Array<Script> = [];
@@ -7,13 +13,19 @@ class ScriptPack extends Script {
 	public var publicVariables:Map<String, Dynamic> = [];
 	public var parent:Dynamic = null;
 
+	/**
+	 * Loads all scripts in the pack.
+	**/
 	public override function load() {
 		for(e in scripts) {
 			e.load();
-			//trace('Script Loaded: ${e}');
 		}
 	}
 
+	/**
+	 * Checks if the script pack contains a script with a specific path.
+	 * @param path Path to check
+	 */
 	public function contains(path:String) {
 		for(e in scripts)
 			if (e.path == path)
@@ -25,6 +37,10 @@ class ScriptPack extends Script {
 		super(name);
 	}
 
+	/**
+	 * Gets a script by path.
+	 * @param name Path to the script
+	**/
 	public function getByPath(name:String) {
 		for(s in scripts)
 			if (s.path == name)
@@ -32,12 +48,22 @@ class ScriptPack extends Script {
 		return null;
 	}
 
+	/**
+	 * Gets a script by name.
+	 * @param name Name of the script
+	**/
 	public function getByName(name:String) {
 		for(s in scripts)
 			if (s.fileName == name)
 				return s;
 		return null;
 	}
+
+	/**
+	 * Imports a script by path.
+	 * @param path Path to the script
+	 * @throws Error if the script does not exist
+	**/
 	public function importScript(path:String):Script {
 		var script = Script.create(Paths.script(path));
 		if (script is DummyScript) {
@@ -49,9 +75,15 @@ class ScriptPack extends Script {
 		return script;
 	}
 
+	/**
+	 * Calls a function on every single script.
+	 * Only calls on scripts that are active.
+	 * @param func Function to call
+	 * @param parameters Parameters to pass to the function
+	**/
 	public override function call(func:String, ?parameters:Array<Dynamic>):Dynamic {
 		for(e in scripts)
-			if(e.active)
+			if (e.active)
 				e.call(func, parameters);
 		return null;
 	}
@@ -72,6 +104,10 @@ class ScriptPack extends Script {
 		return event;
 	}
 
+	/**
+	 * Gets the first script that has a variable with a specific name.
+	 * @param val Name of the variable
+	**/
 	public override function get(val:String):Dynamic {
 		for(e in scripts) {
 			var v = e.get(val);
@@ -80,44 +116,66 @@ class ScriptPack extends Script {
 		return null;
 	}
 
+	/**
+	 * Reloads all scripts in the pack.
+	**/
 	public override function reload() {
 		for(e in scripts) e.reload();
 	}
 
+	/**
+	 * Sets a variable in every script.
+	**/
 	public override function set(val:String, value:Dynamic) {
 		for(e in scripts) e.set(val, value);
 	}
 
-	public override function setupPlayState() {
-		for(e in scripts) e.setupPlayState();
-	}
-
+	/**
+	 * Sets the parent/this of every script in the pack.
+	 */
 	public override function setParent(parent:Dynamic) {
 		this.parent = parent;
 		for(e in scripts) e.setParent(parent);
 	}
 
+	/**
+	 * Destroys all scripts in the pack.
+	**/
 	public override function destroy() {
 		super.destroy();
 		for(e in scripts) e.destroy();
 	}
 
-	public override function onCreate(path:String) {}
+	@:dox(hide) public override function onCreate(path:String) {}
 
+	/**
+	 * Adds a script to the pack, and sets the parent/this of the script.
+	**/
 	public function add(script:Script) {
 		scripts.push(script);
 		__configureNewScript(script);
 	}
 
+	/**
+	 * Removes a script from the pack.
+	 * Does not reset the parent/this.
+	**/
 	public function remove(script:Script) {
 		scripts.remove(script);
 	}
 
+	/**
+	 * Inserts a script into the pack, and sets the parent/this of the script.
+	**/
 	public function insert(pos:Int, script:Script) {
 		scripts.insert(pos, script);
 		__configureNewScript(script);
 	}
 
+	/**
+	 * Configures a new script.
+	 * @param script Script to configure
+	**/
 	private function __configureNewScript(script:Script) {
 		if (parent != null) script.setParent(parent);
 		script.setPublicMap(publicVariables);
@@ -130,146 +188,4 @@ class ScriptPack extends Script {
 			LabelValuePair.weak("total", scripts.length),
 		]);
 	}
-}th);
-		this.path = path;
-		onCreate(path);
-		for(k=>e in getDefaultVariables(this)) {
-			set(k, e);
-		}
-		set("disableScript", () -> {
-			active = false;
-		});
-		set("__script__", this);
-	}
-
-
-	/**
-	 * Loads the script
-	 */
-	public function load() {
-		if(didLoad) return;
-
-		var oldScript = curScript;
-		curScript = this;
-		onLoad();
-		curScript = oldScript;
-
-		didLoad = true;
-	}
-
-	/**
-	 * HSCRIPT ONLY FOR NOW
-	 * Sets the "public" variables map for ScriptPack
-	 */
-	public function setPublicMap(map:Map<String, Dynamic>) {
-
-	}
-
-	/**
-	 * Hot-reloads the script, if possible
-	 */
-	public function reload() {
-
-	}
-
-	/**
-	 * Traces something as this script.
-	 */
-	public function trace(v:Dynamic) {
-		var fileName = this.fileName;
-		if(remappedNames.exists(fileName))
-			fileName = remappedNames.get(fileName);
-		Logs.traceColored([
-			Logs.logText(fileName + ': ', GREEN),
-			Logs.logText(Std.string(v))
-		], TRACE);
-	}
-
-
-	/**
-	 * Calls the function `func` defined in the script.
-	 * @param func Name of the function
-	 * @param parameters (Optional) Parameters of the function.
-	 * @return Result (if void, then null)
-	 */
-	public function call(func:String, ?parameters:Array<Dynamic>):Dynamic {
-		var oldScript = curScript;
-		curScript = this;
-
-		var result = onCall(func, parameters == null ? [] : parameters);
-
-		curScript = oldScript;
-		return result;
-	}
-
-	/**
-	 * Loads the code from a string, doesn't really work after the script has been loaded
-	 * @param code The code.
-	 */
-	public function loadFromString(code:String) {
-		return this;
-	}
-
-	/**
-	 * Sets a script's parent object so that its properties can be accessed easily. Ex: Passing `PlayState.instance` will allow `boyfriend` to be typed instead of `PlayState.instance.boyfriend`.
-	 * @param variable Parent variable.
-	 */
-	public function setParent(variable:Dynamic) {}
-
-	/**
-	 * Gets the variable `variable` from the script's variables.
-	 * @param variable Name of the variable.
-	 * @return Variable (or null if it doesn't exists)
-	 */
-	public function get(variable:String):Dynamic {return null;}
-
-	/**
-	 * Sets the variable `variable` from the script's variables.
-	 * @param variable Name of the variable.
-	 * @return Variable (or null if it doesn't exists)
-	 */
-	public function set(variable:String, value:Dynamic):Void {}
-
-	/**
-	 * Shows an error from this script.
-	 * @param text Text of the error (ex: Null Object Reference).
-	 * @param additionalInfo Additional information you could provide.
-	 */
-	public function error(text:String, ?additionalInfo:Dynamic):Void {
-		var fileName = this.fileName;
-		if(remappedNames.exists(fileName))
-			fileName = remappedNames.get(fileName);
-		Logs.traceColored([
-			Logs.logText(fileName, RED),
-			Logs.logText(text)
-		], ERROR);
-	}
-
-	override public function toString():String {
-		return FlxStringUtil.getDebugString(didLoad ? [
-			LabelValuePair.weak("path", path),
-			LabelValuePair.weak("active", active),
-		] : [
-			LabelValuePair.weak("path", path),
-			LabelValuePair.weak("active", active),
-			LabelValuePair.weak("loaded", didLoad),
-		]);
-	}
-
-	/**
-	 * PRIVATE HANDLERS - DO NOT TOUCH
-	 */
-	private function onCall(func:String, parameters:Array<Dynamic>):Dynamic {
-		return null;
-	}
-	/**
-	 * Called when the script is created.
-	 * @param path Path to the script
-	 */
-	public function onCreate(path:String) {}
-
-	/**
-	 * Called when the script is loaded.
-	 */
-	public function onLoad() {}
 }
