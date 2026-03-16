@@ -335,7 +335,7 @@ class FlxGraphic implements IFlxDestroyable
 	/**
 	 * Usage counter for this `FlxGraphic` object.
 	 */
-	public var useCount(default, default):Int = 0;
+	public var useCount(default, null):Int = 0;
 
 	/**
 	 * `FlxImageFrame` object for the whole bitmap.
@@ -381,16 +381,6 @@ class FlxGraphic implements IFlxDestroyable
 	var _useCount(get, set):Int;
 	inline function get__useCount() return useCount;
 	inline function set__useCount(value:Int) return useCount = value;
-	
-	function set_useCount(Value:Int):Int
-	{
-		/*
-		if (!FlxG.bitmap.__doNotDelete && Value <= 0 && _destroyOnNoUse && !persist)
-			FlxG.bitmap.remove(this);
-		*/
-
-		return _useCount = Value;
-	}
 
 	@:deprecated('_destroyOnNoUse is deprecated, use destroyOnNoUse')
 	var _destroyOnNoUse(get, set):Bool;
