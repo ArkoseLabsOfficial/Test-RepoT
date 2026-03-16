@@ -1,623 +1,307 @@
-package flixel.graphics;
+package flixel;
 
-import flixel.FlxG;
-import flixel.graphics.frames.FlxAtlasFrames;
-import flixel.graphics.frames.FlxFrame;
-import flixel.graphics.frames.FlxFramesCollection;
-import flixel.graphics.frames.FlxImageFrame;
-import flixel.math.FlxPoint;
-import flixel.math.FlxRect;
-import flixel.system.FlxAssets;
+import flixel.group.FlxGroup;
 import flixel.util.FlxColor;
 import flixel.util.FlxDestroyUtil;
-import openfl.display.BitmapData;
+import flixel.util.FlxSignal;
+import flixel.util.typeLimit.NextState;
 
 /**
- * `BitmapData` wrapper which is used for rendering.
- * It stores info about all frames, generated for specific `BitmapData` object.
+ * This is the basic game "state" object - e.g. in a simple game you might have a menu state and a play state.
+ * It is for all intents and purpose a fancy `FlxGroup`. And really, it's not even that fancy.
  */
-class FlxGraphic implements IFlxDestroyable
+@:keepSub // workaround for HaxeFoundation/haxe#3749
+#if FLX_NO_UNIT_TEST
+@:autoBuild(flixel.system.macros.FlxMacroUtil.deprecateOverride("switchTo", "switchTo is deprecated, use startOutro"))
+#end
+// show deprecation warning when `switchTo` is overriden in dereived classes
+class FlxState extends FlxGroup
 {
 	/**
-	 * The default value for the `persist` variable at creation if none is specified in the constructor.
-	 * @see [FlxGraphic.persist](https://api.haxeflixel.com/flixel/graphics/FlxGraphic.html#persist)
+	 * Determines whether or not this state is updated even when it is not the active state.
+	 * For example, if you have your game state first, and then you push a menu state on top of it,
+	 * if this is set to `true`, the game state would continue to update in the background.
+	 * By default this is `false`, so background states will be "paused" when they are not active.
 	 */
-	public static var defaultPersist:Bool = false;
+	public var persistentUpdate:Bool = false;
 
 	/**
-	 * Creates and caches FlxGraphic object from openfl.Assets key string.
+	 * Determines whether or not this state is updated even when it is not the active state.
+	 * For example, if you have your game state first, and then you push a menu state on top of it,
+	 * if this is set to `true`, the game state would continue to be drawn behind the pause state.
+	 * By default this is `true`, so background states will continue to be drawn behind the current state.
 	 *
-	 * @param   Source   `openfl.Assets` key string. For example: `"assets/image.png"`.
-	 * @param   Unique   Ensures that the `BitmapData` uses a new slot in the cache.
-	 *                   If `true`, then `BitmapData` for this `FlxGraphic` will be cloned, which means extra memory.
-	 * @param   Key      Force the cache to use a specific key to index the bitmap.
-	 * @param   Cache    Whether to use graphic caching or not. Default value is `true`, which means automatic caching.
-	 * @return  Cached `FlxGraphic` object we just created.
+	 * If background states are not `visible` when you have a different state on top,
+	 * you should set this to `false` for improved performance.
 	 */
-	public static function fromAssetKey(Source:String, Unique:Bool = false, ?Key:String, Cache:Bool = true):FlxGraphic
+	public var persistentDraw:Bool = true;
+
+	/**
+	 * If substates get destroyed when they are closed, setting this to
+	 * `false` might reduce state creation time, at greater memory cost.
+	 */
+	public var destroySubStates:Bool = true;
+
+	/**Add commentMore actions
+	 * Tracker for whenever the state has already been created.
+	 */
+	public var created:Bool = false;
+
+	/**
+	 * Tracker for whenever the state has already been post-created.
+	 */
+	public var postCreated:Bool = false;
+
+	/**
+	 * The natural background color the cameras default to. In `AARRGGBB` format.
+	 */
+	public var bgColor(get, set):FlxColor;
+	
+	/**
+	 * The specific argument that was passed into `switchState` or `FlxGame.new`
+	 */
+	@:allow(flixel.FlxGame)
+	@:allow(flixel.FlxG)
+	var _constructor:NextState;
+	
+	/**
+	 * Current substate. Substates also can be nested.
+	 */
+	public var subState(default, null):FlxSubState;
+
+	/**
+	 * If a state change was requested, the new state object is stored here until we switch to it.
+	 */
+	@:noCompletion
+	var _requestedSubState:FlxSubState;
+
+	/**
+	 * Whether to reset the substate (when it changes, or when it's closed).
+	 */
+	@:noCompletion
+	var _requestSubStateReset:Bool = false;
+
+	/**
+	 * A `FlxSignal` that dispatches when a sub state is opened from this state.
+	 * @since 4.9.0
+	 */
+	public var subStateOpened(get, never):FlxTypedSignal<FlxSubState->Void>;
+
+	/**
+	 * A `FlxSignal` that dispatches when a sub state is closed from this state.
+	 * @since 4.9.0
+	 */
+	public var subStateClosed(get, never):FlxTypedSignal<FlxSubState->Void>;
+
+	/**
+	 * Internal variables for lazily creating `subStateOpened` and `subStateClosed` signals when needed.
+	 */
+	@:noCompletion
+	var _subStateOpened:FlxTypedSignal<FlxSubState->Void>;
+
+	@:noCompletion
+	var _subStateClosed:FlxTypedSignal<FlxSubState->Void>;
+	
+	public function new ()
 	{
-		var bitmap:BitmapData = null;
-
-		if (!Cache)
-		{
-			bitmap = FlxAssets.getBitmapData(Source);
-			if (bitmap == null)
-				return null;
-			return createGraphic(bitmap, Key, Unique, Cache);
-		}
-
-		var key:String = FlxG.bitmap.generateKey(Source, Key, Unique);
-		var graphic:FlxGraphic = FlxG.bitmap.get(key);
-		if (graphic != null)
-			return graphic;
-
-		bitmap = FlxAssets.getBitmapData(Source);
-		if (bitmap == null)
-			return null;
-
-		graphic = createGraphic(bitmap, key, Unique);
-		graphic.assetsKey = Source;
-		return graphic;
-	}
-
-	/**
-	 * Creates and caches `FlxGraphic` object from a specified `Class<BitmapData>`.
-	 *
-	 * @param   Source   `Class<BitmapData>` to create `BitmapData` for `FlxGraphic` from.
-	 * @param   Unique   Ensures that the `BitmapData` uses a new slot in the cache.
-	 *                   If `true`, then `BitmapData` for this `FlxGraphic` will be cloned, which means extra memory.
-	 * @param   Key      Force the cache to use a specific key to index the bitmap.
-	 * @param   Cache    Whether to use graphic caching or not. Default value is `true`, which means automatic caching.
-	 * @return  `FlxGraphic` object we just created.
-	 */
-	public static function fromClass(Source:Class<BitmapData>, Unique:Bool = false, ?Key:String, Cache:Bool = true):FlxGraphic
-	{
-		var bitmap:BitmapData = null;
-		if (!Cache)
-		{
-			bitmap = FlxAssets.getBitmapFromClass(Source);
-			return createGraphic(bitmap, Key, Unique, Cache);
-		}
-
-		var key:String = FlxG.bitmap.getKeyForClass(Source);
-		key = FlxG.bitmap.generateKey(key, Key, Unique);
-		var graphic:FlxGraphic = FlxG.bitmap.get(key);
-		if (graphic != null)
-			return graphic;
-
-		bitmap = FlxAssets.getBitmapFromClass(Source);
-		graphic = createGraphic(bitmap, key, Unique);
-		graphic.assetsClass = Source;
-		return graphic;
-	}
-
-	/**
-	 * Creates and caches `FlxGraphic` object from specified `BitmapData` object.
-	 *
-	 * @param   Source   `BitmapData` for `FlxGraphic` to use.
-	 * @param   Unique   Ensures that the `BitmapData` uses a new slot in the cache.
-	 *                   If `true`, then `BitmapData` for this `FlxGraphic` will be cloned, which means extra memory.
-	 * @param   Key      Force the cache to use a specific key to index the bitmap.
-	 * @param   Cache    Whether to use graphic caching or not. Default value is `true`, which means automatic caching.
-	 * @return  `FlxGraphic` object we just created.
-	 */
-	public static function fromBitmapData(Source:BitmapData, Unique:Bool = false, ?Key:String, Cache:Bool = true):FlxGraphic
-	{
-		if (!Cache)
-			return createGraphic(Source, Key, Unique, Cache);
-
-		var key:String = FlxG.bitmap.findKeyForBitmap(Source);
-
-		var assetKey:String = null;
-		var assetClass:Class<BitmapData> = null;
-		var graphic:FlxGraphic = null;
-		if (key != null)
-		{
-			graphic = FlxG.bitmap.get(key);
-			assetKey = graphic.assetsKey;
-			assetClass = graphic.assetsClass;
-		}
-
-		key = FlxG.bitmap.generateKey(key, Key, Unique);
-		graphic = FlxG.bitmap.get(key);
-		if (graphic != null)
-			return graphic;
-
-		graphic = createGraphic(Source, key, Unique);
-		graphic.assetsKey = assetKey;
-		graphic.assetsClass = assetClass;
-		return graphic;
-	}
-
-	/**
-	 * Creates and (optionally) caches a `FlxGraphic` object from the specified `FlxFrame`.
-	 * It uses frame's `BitmapData`, not the `frame.parent.bitmap`.
-	 *
-	 * @param   Source   `FlxFrame` to get the `BitmapData` from.
-	 * @param   Unique   Ensures that the bitmap data uses a new slot in the cache.
-	 *                   If `true`, then `BitmapData` for this `FlxGraphic` will be cloned, which means extra memory.
-	 * @param   Key      Force the cache to use a specific key to index the bitmap.
-	 * @param   Cache    Whether to use graphic caching or not. Default value is `true`, which means automatic caching.
-	 * @return  `FlxGraphic` object we just created.
-	 */
-	public static function fromFrame(Source:FlxFrame, Unique:Bool = false, ?Key:String, Cache:Bool = true):FlxGraphic
-	{
-		var key:String = Source.name;
-		if (key == null)
-			key = Source.frame.toString();
-		key = Source.parent.key + ":" + key;
-		key = FlxG.bitmap.generateKey(key, Key, Unique);
-		var graphic:FlxGraphic = FlxG.bitmap.get(key);
-		if (graphic != null)
-			return graphic;
-
-		var bitmap:BitmapData = Source.paint();
-		graphic = createGraphic(bitmap, key, Unique, Cache);
-		var image:FlxImageFrame = FlxImageFrame.fromGraphic(graphic);
-		image.getByIndex(0).name = Source.name;
-		return graphic;
-	}
-
-	/**
-	 * Creates and caches a FlxGraphic object from the specified `FlxFramesCollection`.
-	 * It uses `frames.parent.bitmap` as a source for the `FlxGraphic`'s `BitmapData`.
-	 * It also copies all the frames collections onto the newly created `FlxGraphic`.
-	 *
-	 * @param   Source   `FlxFramesCollection` to get the `BitmapData` from.
-	 * @param   Unique   Ensures that the `BitmapData` uses a new slot in the cache.
-	 *                   If `true`, then `BitmapData` for this `FlxGraphic` will be cloned, which means extra memory.
-	 * @param   Key      Force the cache to use a specific key to index the bitmap.
-	 * @return  Cached `FlxGraphic` object we just created.
-	 */
-	public static inline function fromFrames(Source:FlxFramesCollection, Unique:Bool = false, ?Key:String):FlxGraphic
-	{
-		return fromGraphic(Source.parent, Unique, Key);
-	}
-
-	/**
-	 * Creates and caches a `FlxGraphic` object from the specified `FlxGraphic` object.
-	 * It copies all the frame collections onto the newly created `FlxGraphic`.
-	 *
-	 * @param   Source   `FlxGraphic` to get the `BitmapData` from.
-	 * @param   Unique   Ensures that the `BitmapData` uses a new slot in the cache.
-	 *                   If `true`, then `BitmapData` for this `FlxGraphic` will be cloned, which means extra memory.
-	 * @param   Key      Force the cache to use a specific key to index the bitmap.
-	 * @return  Cached `FlxGraphic` object we just created.
-	 */
-	public static function fromGraphic(Source:FlxGraphic, Unique:Bool = false, ?Key:String):FlxGraphic
-	{
-		if (!Unique)
-			return Source;
-
-		var key:String = FlxG.bitmap.generateKey(Source.key, Key, Unique);
-		var graphic:FlxGraphic = createGraphic(Source.bitmap, key, Unique);
-		graphic.unique = Unique;
-		graphic.assetsClass = Source.assetsClass;
-		graphic.assetsKey = Source.assetsKey;
-		return FlxG.bitmap.addGraphic(graphic);
-	}
-
-	/**
-	 * Generates and caches new `FlxGraphic` object with a colored rectangle.
-	 *
-	 * @param   Width    How wide the rectangle should be.
-	 * @param   Height   How high the rectangle should be.
-	 * @param   Color    What color the rectangle should have (`0xAARRGGBB`).
-	 * @param   Unique   Ensures that the `BitmapData` uses a new slot in the cache.
-	 * @param   Key      Force the cache to use a specific key to index the bitmap.
-	 * @return  The `FlxGraphic` object we just created.
-	 */
-	public static function fromRectangle(Width:Int, Height:Int, Color:FlxColor, Unique:Bool = false, ?Key:String):FlxGraphic
-	{
-		var systemKey:String = Width + "x" + Height + ":" + Color;
-		var key:String = FlxG.bitmap.generateKey(systemKey, Key, Unique);
-
-		var graphic:FlxGraphic = FlxG.bitmap.get(key);
-		if (graphic != null)
-			return graphic;
-
-		var bitmap = new BitmapData(Width, Height, true, Color);
-		return createGraphic(bitmap, key);
-	}
-
-	/**
-	 * Helper method for cloning specified `BitmapData` if necessary.
-	 *
-	 * @param   Bitmap   `BitmapData` to process
-	 * @param   Unique   Whether we need to clone specified `BitmapData` object or not
-	 * @return  Processed `BitmapData`
-	 */
-	static inline function getBitmap(Bitmap:BitmapData, Unique:Bool = false):BitmapData
-	{
-		return Unique ? Bitmap.clone() : Bitmap;
-	}
-
-	/**
-	 * Creates and caches the specified `BitmapData` object.
-	 *
-	 * @param   Bitmap   `BitmapData` to use as a graphic source for the new `FlxGraphic`.
-	 * @param   Key      Key to use as a cache key for the created `FlxGraphic`.
-	 * @param   Unique   Whether the new `FlxGraphic` object uses a unique `BitmapData` or not.
-	 *                   If `true`, the specified `BitmapData` will be cloned.
-	 * @param   Cache    Whether to use graphic caching or not. Default value is `true`, which means automatic caching.
-	 * @return  Created `FlxGraphic` object.
-	 */
-	static function createGraphic(Bitmap:BitmapData, Key:String, Unique:Bool = false, Cache:Bool = true):FlxGraphic
-	{
-		Bitmap = FlxGraphic.getBitmap(Bitmap, Unique);
-		var graphic:FlxGraphic = null;
-
-		if (Cache)
-		{
-			graphic = new FlxGraphic(Key, Bitmap);
-			graphic.unique = Unique;
-			FlxG.bitmap.addGraphic(graphic);
-		}
-		else
-		{
-			graphic = new FlxGraphic(null, Bitmap);
-		}
-
-		return graphic;
-	}
-
-	/**
-	 * Key used in the `BitmapFrontEnd` cache.
-	 */
-	public var key(default, null):String;
-
-	/**
-	 * The cached `BitmapData` object.
-	 */
-	public var bitmap(default, set):BitmapData;
-
-	/**
-	 * Width of the cached `BitmapData`.
-	 */
-	public var width(default, null):Int = 0;
-
-	/**
-	 * Height of the cached `BitmapData`.
-	 */
-	public var height(default, null):Int = 0;
-
-	/**
-	 * Asset name from `openfl.Assets`.
-	 */
-	public var assetsKey(default, null):String;
-
-	/**
-	 * Class name for the `BitmapData`.
-	 */
-	public var assetsClass(default, null):Class<BitmapData>;
-
-	/**
-	 * Whether this graphic object should stay in the cache after state changes or not.
-	 * `destroyOnNoUse` has no effect when this is set to `true`.
-	 */
-	public var persist:Bool = false;
-
-	/**
-	 * Whether this `FlxGraphic` should be destroyed when `useCount` becomes zero (defaults to `true`).
-	 * Has no effect when `persist` is `true`.
-	 */
-	public var destroyOnNoUse(default, set):Bool = true;
-
-	/**
-	 * Whether the `BitmapData` of this graphic object has been dumped or not.
-	 */
-	public var isDumped(default, null):Bool = false;
-
-	/**
-	 * Whether the `BitmapData` of this graphic object has been loaded or not.
-	 */
-	public var isLoaded(get, never):Bool;
-
-	/**
-	 * Whether `destroy` was called on this graphic
-	 * @since 5.6.0
-	 */
-	public var isDestroyed(get, never):Bool;
-
-	/**
-	 * Whether the `BitmapData` of this graphic object can be dumped for decreased memory usage,
-	 * but may cause some issues (when you need direct access to pixels of this graphic.
-	 * If the graphic is dumped then you should call `undump()` and have total access to pixels.
-	 */
-	public var canBeDumped(get, never):Bool;
-
-	/**
-	 * GLSL shader for this graphic. Only used if utilizing sprites do not define a shader
-	 * Avoid changing it frequently as this is a costly operation.
-	 */
-	public var shader(default, null):FlxShader;
-
-	/**
-	 * Usage counter for this `FlxGraphic` object.
-	 */
-	public var useCount(default, null):Int = 0;
-
-	/**
-	 * `FlxImageFrame` object for the whole bitmap.
-	 */
-	public var imageFrame(get, null):FlxImageFrame;
-
-	/**
-	 * Atlas frames for this graphic.
-	 * You should fill it yourself with one of `FlxAtlasFrames`'s static methods
-	 * (like `fromTexturePackerJson()`, `fromTexturePackerXml()`, etc).
-	 */
-	public var atlasFrames(get, never):FlxAtlasFrames;
-
-	/**
-	 * Storage for all available frame collection of all types for this graphic object.
-	 */
-	var frameCollections:Map<FlxFrameCollectionType, Array<Dynamic>>;
-
-	/**
-	 * All types of frames collection which had been added to this graphic object.
-	 * It helps to avoid map iteration, which produces a lot of garbage.
-	 */
-	var frameCollectionTypes:Array<FlxFrameCollectionType>;
-
-	/**
-	 * Shows whether this object unique in cache or not.
-	 *
-	 * Whether undumped `BitmapData` should be cloned or not.
-	 * It is `false` by default, since it significantly increases memory consumption.
-	 */
-	public var unique:Bool = false;
-
-	/**
-	 * Internal var holding `FlxImageFrame` for the whole bitmap of this graphic.
-	 * Use public `imageFrame` var to access/generate it.
-	 */
-	@:deprecated("_imageFrame is deprecated, use imageFrame")
-	var _imageFrame(get, set):FlxImageFrame;
-	inline function get__imageFrame() return imageFrame;
-	inline function set__imageFrame(value:FlxImageFrame) return imageFrame = value;
-
-	@:deprecated('_useCount is deprecated, use incrementUseCount and decrementUseCount')
-	var _useCount(get, set):Int;
-	inline function get__useCount() return useCount;
-	inline function set__useCount(value:Int) return useCount = value;
-
-	@:deprecated('_destroyOnNoUse is deprecated, use destroyOnNoUse')
-	var _destroyOnNoUse(get, set):Bool;
-	inline function get__destroyOnNoUse() return destroyOnNoUse;
-	inline function set__destroyOnNoUse(value:Bool) return destroyOnNoUse = value;
-	/**
-	 * `FlxGraphic` constructor
-	 *
-	 * @param   Key       Key string for this graphic object, with which you can get it from bitmap cache.
-	 * @param   Bitmap    `BitmapData` for this graphic object.
-	 * @param   Persist   Whether or not this graphic stay in the cache after resetting it.
-	 *                    Default value is `false`, which means that this graphic will be destroyed at the cache reset.
-	 */
-	function new(key:String, bitmap:BitmapData, ?persist:Bool)
-	{
-		this.key = key;
-		this.persist = (persist != null) ? persist : defaultPersist;
-
-		frameCollections = new Map<FlxFrameCollectionType, Array<Dynamic>>();
-		frameCollectionTypes = new Array<FlxFrameCollectionType>();
-		this.bitmap = bitmap;
-
-		shader = new FlxShader();
-	}
-
-	/**
-	 * Dumps bits of `BitmapData` to decrease memory usage, but you can't read/write pixels on it anymore
-	 * (but you can call `onContext()` (or `undump()`) method which will restore it again).
-	 */
-	public function dump():Void
-	{
-		#if (lime_legacy && !flash)
-		if (FlxG.renderTile && canBeDumped)
-		{
-			bitmap.dumpBits();
-			isDumped = true;
-		}
-		#end
-	}
-
-	/**
-	 * Undumps bits of the `BitmapData` - regenerates it and regenerate tilesheet data for this object
-	 */
-	public function undump():Void
-	{
-		var newBitmap:BitmapData = getBitmapFromSystem();
-		if (newBitmap != null)
-			bitmap = newBitmap;
-		isDumped = false;
-	}
-
-	/**
-	 * Use this method to restore cached `BitmapData` (if it's possible).
-	 * It's called automatically when the RESIZE event occurs.
-	 */
-	public function onContext():Void
-	{
-		// no need to restore tilesheet if it hasn't been dumped
-		if (isDumped)
-		{
-			undump(); // restore everything
-			dump(); // and dump BitmapData again
-		}
-	}
-
-	/**
-	 * Asset reload callback for this graphic object.
-	 * It regenerated its tilesheet and resets frame bitmaps.
-	 */
-	public function onAssetsReload():Void
-	{
-		if (!canBeDumped)
-			return;
-
-		var dumped:Bool = isDumped;
-		undump();
-		if (dumped)
-			dump();
-	}
-
-	/**
-	 * Trying to free the memory as much as possible
-	 */
-	public function destroy():Void
-	{
-		bitmap = FlxDestroyUtil.dispose(bitmap);
-
-		shader = null;
-
-		key = null;
-		assetsKey = null;
-		assetsClass = null;
-		imageFrame = null; // no need to dispose _imageFrame since it exists in imageFrames
-
-		if (frameCollections == null) // no need to destroy frame collections if it's already null
-			return;
-
-		var collections:Array<FlxFramesCollection>;
-		for (collectionType in frameCollectionTypes)
-		{
-			collections = cast frameCollections.get(collectionType);
-			FlxDestroyUtil.destroyArray(collections);
-		}
-
-		frameCollections = null;
-		frameCollectionTypes = null;
-	}
-
-	/**
-	 * Stores specified `FlxFrame` collection in internal map (this helps reduce object creation).
-	 *
-	 * @param   collection   frame collection to store.
-	 */
-	public function addFrameCollection(collection:FlxFramesCollection):Void
-	{
-		if (collection.type != null)
-		{
-			var collections:Array<Dynamic> = getFramesCollections(collection.type);
-			collections.push(collection);
-		}
-	}
-
-	/**
-	 * Searches frame collections of specified type for this `FlxGraphic` object.
-	 *
-	 * @param   type   The type of frames collections to search for.
-	 * @return  Array of available frames collections of specified type for this object.
-	 */
-	public inline function getFramesCollections(type:FlxFrameCollectionType):Array<Dynamic>
-	{
-		var collections:Array<Dynamic> = frameCollections.get(type);
-		if (collections == null)
-		{
-			collections = new Array<FlxFramesCollection>();
-			frameCollections.set(type, collections);
-		}
-		return collections;
-	}
-
-	/**
-	 * Creates empty frame for this graphic with specified size.
-	 * This method could be useful for tile frames, in case when you'll need empty tile.
-	 *
-	 * @param   size   dimensions of the frame to add.
-	 * @return  Empty frame with specified size which belongs to this `FlxGraphic` object.
-	 */
-	public inline function getEmptyFrame(size:FlxPoint):FlxFrame
-	{
-		var frame = new FlxFrame(this);
-		frame.type = FlxFrameType.EMPTY;
-		frame.frame = FlxRect.get();
-		frame.sourceSize.copyFrom(size);
-		return frame;
-	}
-
-	/**
-	 * Gets the `BitmapData` for this graphic object from OpenFL.
-	 * This method is used for undumping graphic.
-	 */
-	function getBitmapFromSystem():BitmapData
-	{
-		var newBitmap:BitmapData = null;
-		if (assetsClass != null)
-			newBitmap = FlxAssets.getBitmapFromClass(assetsClass);
-		else if (assetsKey != null)
-			newBitmap = FlxAssets.getBitmapData(assetsKey);
-
-		if (newBitmap != null)
-			return FlxGraphic.getBitmap(newBitmap, unique);
-
-		return null;
+		super(0);
 	}
 	
-	inline function get_isLoaded()
-	{
-		return bitmap != null && !bitmap.rect.isEmpty();
-	}
-	
-	inline function get_isDestroyed()
-	{
-		return shader == null;
+	/**
+	 * This function is called after the game engine successfully switches states.
+	 * Override this function, NOT the constructor, to initialize or set up your game state.
+	 * We do NOT recommend initializing any flixel objects or utilizing flixel features in
+	 * the constructor, unless you want some crazy unpredictable things to happen!
+	 */
+	public function create():Void {
+		created = true;
 	}
 
-	inline function get_canBeDumped():Bool
+	override public function draw():Void
 	{
-		return assetsClass != null || assetsKey != null;
+		if (persistentDraw || subState == null)
+			super.draw();
+
+		if (subState != null)
+			subState.draw();
 	}
-	
-	public function incrementUseCount()
+
+	public function openSubState(SubState:FlxSubState):Void
 	{
-		useCount++;
+		_requestSubStateReset = true;
+		_requestedSubState = SubState;
 	}
-	
-	public function decrementUseCount()
+
+	/**
+	 * Closes the substate of this state, if one exists.
+	 */
+	public function closeSubState():Void
 	{
-		useCount--;
+		_requestSubStateReset = true;
+	}
+
+	/**
+	 * Called at the very end of the state creation process.
+	 */
+	public function createPost():Void
+	{
+		postCreated = true;
+	}
+
+	/**
+	 * Load substate for this state
+	 */
+	public function resetSubState():Void
+	{
+		// Close the old state (if there is an old state)
+		if (subState != null)
+		{
+			if (subState.closeCallback != null)
+				subState.closeCallback();
+			if (_subStateClosed != null)
+				_subStateClosed.dispatch(subState);
+
+			if (destroySubStates)
+				subState.destroy();
+		}
+
+		// Assign the requested state (or set it to null)
+		subState = _requestedSubState;
+		_requestedSubState = null;
+
+		if (subState != null)
+		{
+			// Reset the input so things like "justPressed" won't interfere
+			if (!persistentUpdate)
+				FlxG.inputs.onStateSwitch();
+
+			subState._parentState = this;
+
+			var didCreate = false;
+
+			if (didCreate = !subState._created)
+			{
+				subState._created = true;
+				subState.create();
+			}
+			if (subState.openCallback != null)
+				subState.openCallback();
+
+				if (didCreate)
+					subState.createPost();
+
+			if (_subStateOpened != null)
+				_subStateOpened.dispatch(subState);
+		}
+	}
+
+	override function destroy():Void
+	{
+		_constructor = function():FlxState
+		{
+			throw "Attempting to resetState while the current state is destroyed";
+		};
+		FlxDestroyUtil.destroy(_subStateOpened);
+		FlxDestroyUtil.destroy(_subStateClosed);
 		
-		checkUseCount();
+		if (subState != null)
+		{
+			subState.destroy();
+			subState = null;
+		}
+		super.destroy();
+	}
+
+	/**
+	 * Called from `FlxG.switchState()`. If `false` is returned, the state
+	 * switch is cancelled - the default implementation returns `true`.
+	 *
+	 * Useful for customizing state switches, e.g. for transition effects.
+	 */
+	@:deprecated("switchTo is deprecated, use startOutro")
+	public function switchTo(nextState:FlxState):Bool
+	{
+		return true;
 	}
 	
-	function checkUseCount()
+	/**
+	 * Called from `FlxG.switchState()`, when `onOutroComplete` is called, the actual state
+	 * switching will happen.
+	 * 
+	 * Note: Calling `super.startOutro(onOutroComplete)` will call `onOutroComplete`.
+	 * 
+	 * @param   onOutroComplete  Called when the outro is complete.
+	 * @since 5.3.0
+	 */
+	public function startOutro(onOutroComplete:()->Void)
 	{
-		if (useCount <= 0 && destroyOnNoUse && !persist)
-			FlxG.bitmap.remove(this);
+		onOutroComplete();
 	}
 
-	function set_destroyOnNoUse(value:Bool):Bool
-	{
-		this.destroyOnNoUse = value;
-		
-		checkUseCount();
-		
-		return value;
-	}
+	/**
+	 * This method is called after the game loses focus.
+	 * Can be useful for third party libraries, such as tweening engines.
+	 */
+	public function onFocusLost():Void {}
 
-	function get_imageFrame():FlxImageFrame
-	{
-		if (imageFrame == null)
-			imageFrame = FlxImageFrame.fromRectangle(this, FlxRect.get(0, 0, bitmap.width, bitmap.height));
+	/**
+	 * This method is called after the game receives focus.
+	 * Can be useful for third party libraries, such as tweening engines.
+	 */
+	public function onFocus():Void {}
 
-		return imageFrame;
-	}
+	/**
+	 * This function is called whenever the window size has been changed.
+	 *
+	 * @param   Width    The new window width
+	 * @param   Height   The new window Height
+	 */
+	public function onResize(Width:Int, Height:Int):Void {}
 
-	function get_atlasFrames():FlxAtlasFrames
+	@:allow(flixel.FlxGame)
+	function tryUpdate(elapsed:Float):Void
 	{
-		return FlxAtlasFrames.findFrame(this, null);
-	}
+		if (persistentUpdate || subState == null)
+			update(elapsed);
 
-	function set_bitmap(value:BitmapData):BitmapData
-	{
-		if (value != null)
+		if (_requestSubStateReset)
 		{
-			bitmap = value;
-			width = bitmap.width;
-			height = bitmap.height;
+			_requestSubStateReset = false;
+			resetSubState();
 		}
+		if (subState != null)
+		{
+			subState.tryUpdate(elapsed);
+		}
+	}
 
-		return value;
+	@:noCompletion
+	function get_bgColor():FlxColor
+	{
+		return FlxG.cameras.bgColor;
+	}
+
+	@:noCompletion
+	function set_bgColor(Value:FlxColor):FlxColor
+	{
+		return FlxG.cameras.bgColor = Value;
+	}
+    
+	@:noCompletion
+	function get_subStateOpened():FlxTypedSignal<FlxSubState->Void>
+	{
+		if (_subStateOpened == null)
+			_subStateOpened = new FlxTypedSignal<FlxSubState->Void>();
+
+		return _subStateOpened;
+	}
+
+	@:noCompletion
+	function get_subStateClosed():FlxTypedSignal<FlxSubState->Void>
+	{
+		if (_subStateClosed == null)
+			_subStateClosed = new FlxTypedSignal<FlxSubState->Void>();
+
+		return _subStateClosed;
 	}
 }
