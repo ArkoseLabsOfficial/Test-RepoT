@@ -42,16 +42,6 @@ class FlxState extends FlxGroup
 	 */
 	public var destroySubStates:Bool = true;
 
-	/**Add commentMore actions
-	 * Tracker for whenever the state has already been created.
-	 */
-	public var created:Bool = false;
-
-	/**
-	 * Tracker for whenever the state has already been post-created.
-	 */
-	public var postCreated:Bool = false;
-
 	/**
 	 * The natural background color the cameras default to. In `AARRGGBB` format.
 	 */
@@ -113,9 +103,7 @@ class FlxState extends FlxGroup
 	 * We do NOT recommend initializing any flixel objects or utilizing flixel features in
 	 * the constructor, unless you want some crazy unpredictable things to happen!
 	 */
-	public function create():Void {
-		created = true;
-	}
+	public function create():Void {}
 
 	override public function draw():Void
 	{
@@ -138,14 +126,6 @@ class FlxState extends FlxGroup
 	public function closeSubState():Void
 	{
 		_requestSubStateReset = true;
-	}
-
-	/**
-	 * Called at the very end of the state creation process.
-	 */
-	public function createPost():Void
-	{
-		postCreated = true;
 	}
 
 	/**
@@ -177,19 +157,13 @@ class FlxState extends FlxGroup
 
 			subState._parentState = this;
 
-			var didCreate = false;
-
-			if (didCreate = !subState._created)
+			if (!subState._created)
 			{
 				subState._created = true;
 				subState.create();
 			}
 			if (subState.openCallback != null)
 				subState.openCallback();
-
-				if (didCreate)
-					subState.createPost();
-
 			if (_subStateOpened != null)
 				_subStateOpened.dispatch(subState);
 		}
